@@ -22,7 +22,7 @@ score based on distance.
 ### Game Mechanics
 - **Keyboard Control**: Arrow keys (or WASD) for steering, movement feels responsive
 - **Acceleration**: Speed increases automatically over time (or with throttle); feel the progression
-- **Collision Detection**: Hitting obstacles stops the car or causes game over
+- **Add life lines**: "Start the game with 3 life lines. When the car hits an obstacle, reduce life line by 1. When life line is 0, cause the game over. Game should not get over if there is still life line left."
 - **Score/Distance**: Counter that increases as you move, visible on screen
 
 ### Code Quality
@@ -34,10 +34,9 @@ score based on distance.
 
 ## Upcoming Enhancements (Backlog for Jules)
 
-1. **Add life lines**: "Start the game with 3 life lines. When the car hits an obstacle, reduce life line by 1. When life line is 0, cause the game over. Game should not get over if there is still life line left."
-2. **Add hazards**: "Add enemy cars that patrol the road. Additionaly add moving obstacles." 
-3. **Add music**: "Add a synthwave audio track from a royalty-free source (or generate one)."
-4. **Difficulty progression**: "Make enemy cars and obstacles appear more frequently as the score increases."
-5. **High score persistence**: "Save the top 3 scores to localStorage and display them on a game-over screen."
+1. **Add hazards**: "Add enemy cars that patrol the road. Additionaly add moving obstacles." 
+2. **Add music**: "Add a synthwave audio track from a royalty-free source (or generate one)."
+3. **Difficulty progression**: "Make enemy cars and obstacles appear more frequently as the score increases."
+4. **High score persistence**: "Save the top 3 scores to localStorage and display them on a game-over screen."
 
 ---
