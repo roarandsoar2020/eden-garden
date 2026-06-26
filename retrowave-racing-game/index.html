@@ -164,6 +164,7 @@
         const keys = { ArrowLeft: false, ArrowRight: false, KeyA: false, KeyD: false };
 
         function initAudio() {
+            if (audioContext) return;
             try {
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
 
@@ -189,28 +190,6 @@
                     osc.stop(time + duration);
                 };
 
-                const playNoise = (time, duration, volume = 0.05) => {
-                    const bufferSize = audioContext.sampleRate * duration;
-                    const buffer = audioContext.createBuffer(1, bufferSize, audioContext.sampleRate);
-                    const data = buffer.getChannelData(0);
-                    for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
-
-                    const noise = audioContext.createBufferSource();
-                    noise.buffer = buffer;
-                    const g = audioContext.createGain();
-                    g.gain.setValueAtTime(volume, time);
-                    g.gain.exponentialRampToValueAtTime(0.0001, time + duration);
-
-                    const f = audioContext.createBiquadFilter();
-                    f.type = 'highpass';
-                    f.frequency.setValueAtTime(1000, time);
-
-                    noise.connect(f);
-                    f.connect(g);
-                    g.connect(gainNode);
-                    noise.start(time);
-                };
-
                 gainNode = audioContext.createGain();
                 gainNode.gain.value = 0.5;
                 gainNode.connect(audioContext.destination);
@@ -222,23 +201,17 @@
 
                 const scheduler = () => {
                     const intensity = Math.min(speed / CONFIG.maxSpeed, 1.0);
-                    const filterCutoff = 400 + (intensity * 2000);
-                    const resonance = 1 + (intensity * 10);
+                    const filterCutoff = 400 + (intensity * 1500);
+                    const resonance = 1 + (intensity * 5);
                     const tempo = 0.18 - (intensity * 0.04);
 
                     while (nextNoteTime < audioContext.currentTime + 0.1) {
                         // Driving Bass
-                        playNote(bassSeq[index % bassSeq.length], nextNoteTime, tempo, 'sawtooth', 0.12, filterCutoff, resonance);
+                        playNote(bassSeq[index % bassSeq.length], nextNoteTime, tempo, 'sawtooth', 0.1, filterCutoff, resonance);
 
                         // Melodic Lead
                         if (index % 2 === 0) {
-                            playNote(leadSeq[index % leadSeq.length], nextNoteTime, tempo * 2, 'square', 0.04, filterCutoff + 500, resonance);
-                            playNote(leadSeq[index % leadSeq.length] * 1.005, nextNoteTime, tempo * 2, 'sawtooth', 0.03, filterCutoff + 300, resonance);
-                        }
-
-                        // Percussive Noise on every 4th beat
-                        if (index % 4 === 0) {
-                            playNoise(nextNoteTime, 0.1, 0.05 + (intensity * 0.05));
+                            playNote(leadSeq[index % leadSeq.length], nextNoteTime, tempo * 2, 'square', 0.03, filterCutoff + 500, resonance);
                         }
 
                         nextNoteTime += tempo;
@@ -302,9 +275,14 @@
             createPlayer();
             
             window.addEventListener('resize', onWindowResize, false);
+            window.addEventListener('mousedown', () => {
+                initAudio();
+                if (audioContext && audioContext.state === 'suspended') audioContext.resume();
+            });
+
             window.addEventListener('keydown', (e) => {
                 keys[e.code] = true;
-                if (!audioContext) initAudio();
+                initAudio();
                 if (audioContext && audioContext.state === 'suspended') audioContext.resume();
             });
             window.addEventListener('keyup', (e) => keys[e.code] = false);
@@ -503,12 +481,16 @@
         const obstacleMatCyan = new THREE.MeshPhongMaterial({
             color: 0x00ffff,
             emissive: 0x00ffff,
-            emissiveIntensity: 0.5
+            emissiveIntensity: 0.5,
+            transparent: true,
+            opacity: 0.7
         });
         const obstacleMatPink = new THREE.MeshPhongMaterial({
             color: 0xff00ff,
             emissive: 0xff00ff,
-            emissiveIntensity: 0.5
+            emissiveIntensity: 0.5,
+            transparent: true,
+            opacity: 0.7
         });
 
         // Enemy Car Assets
@@ -589,21 +571,22 @@
         const playerBox = new THREE.Box3();
         const obstacleBox = new THREE.Box3();
 
-        function updateObstacles() {
+        function updateObstacles(deltaTime) {
             playerBox.setFromObject(player);
+            const deltaScale = deltaTime * 60;
 
             for (let i = obstacles.length - 1; i >= 0; i--) {
                 const obstacle = obstacles[i];
 
                 // Base movement (relative to road)
-                obstacle.position.z += speed;
+                obstacle.position.z += speed * deltaScale;
 
                 // Extra movement for specific hazards
                 if (obstacle.userData.type === 'enemy') {
-                    obstacle.position.z += obstacle.userData.speed;
+                    obstacle.position.z += obstacle.userData.speed * deltaScale;
                 }
                 if (obstacle.userData.isMoving) {
-                    obstacle.position.x += obstacle.userData.vx;
+                    obstacle.position.x += obstacle.userData.vx * deltaScale;
                     if (Math.abs(obstacle.position.x) > CONFIG.roadWidth / 2 - 1) {
                         obstacle.userData.vx *= -1;
                     }
@@ -737,16 +720,16 @@
             endAnimate();
         }
 
-        function updatePlayer() {
-            const moveSpeed = 0.15;
+        function updatePlayer(deltaTime) {
+            const moveSpeed = 15 * deltaTime;
             if (keys.ArrowLeft || keys.KeyA) {
                 player.position.x -= moveSpeed;
-                player.rotation.z = Math.min(player.rotation.z + 0.02, 0.1);
+                player.rotation.z = Math.min(player.rotation.z + 2 * deltaTime, 0.1);
             } else if (keys.ArrowRight || keys.KeyD) {
                 player.position.x += moveSpeed;
-                player.rotation.z = Math.max(player.rotation.z - 0.02, -0.1);
+                player.rotation.z = Math.max(player.rotation.z - 2 * deltaTime, -0.1);
             } else {
-                player.rotation.z *= 0.9;
+                player.rotation.z *= Math.pow(0.9, deltaTime * 60);
             }
 
             // Clamp player position
@@ -789,12 +772,12 @@
 
             updateRoad();
             updateScenery();
-            updatePlayer();
+            updatePlayer(deltaTime);
             updateInvincibility(deltaTime);
             createObstacle();
             createEnemyCar();
             updateGame();
-            updateObstacles();
+            updateObstacles(deltaTime);
             updateParticles();
 
             composer.render();
