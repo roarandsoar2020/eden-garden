@@ -167,19 +167,19 @@
             try {
                 audioContext = new (window.AudioContext || window.webkitAudioContext)();
 
-                // Simple synthwave-ish bassline loop
-                const playNote = (freq, time, duration) => {
+                const playNote = (freq, time, duration, type = 'sawtooth', volume = 0.1, filterFreq = 400, resonance = 1) => {
                     const osc = audioContext.createOscillator();
                     const g = audioContext.createGain();
-                    osc.type = 'sawtooth';
+                    osc.type = type;
                     osc.frequency.setValueAtTime(freq, time);
 
-                    g.gain.setValueAtTime(0.1, time);
+                    g.gain.setValueAtTime(volume, time);
                     g.gain.exponentialRampToValueAtTime(0.0001, time + duration);
 
                     const f = audioContext.createBiquadFilter();
                     f.type = 'lowpass';
-                    f.frequency.setValueAtTime(400, time);
+                    f.frequency.setValueAtTime(filterFreq, time);
+                    f.Q.setValueAtTime(resonance, time);
 
                     osc.connect(f);
                     f.connect(g);
@@ -189,18 +189,59 @@
                     osc.stop(time + duration);
                 };
 
+                const playNoise = (time, duration, volume = 0.05) => {
+                    const bufferSize = audioContext.sampleRate * duration;
+                    const buffer = audioContext.createBuffer(1, bufferSize, audioContext.sampleRate);
+                    const data = buffer.getChannelData(0);
+                    for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+
+                    const noise = audioContext.createBufferSource();
+                    noise.buffer = buffer;
+                    const g = audioContext.createGain();
+                    g.gain.setValueAtTime(volume, time);
+                    g.gain.exponentialRampToValueAtTime(0.0001, time + duration);
+
+                    const f = audioContext.createBiquadFilter();
+                    f.type = 'highpass';
+                    f.frequency.setValueAtTime(1000, time);
+
+                    noise.connect(f);
+                    f.connect(g);
+                    g.connect(gainNode);
+                    noise.start(time);
+                };
+
                 gainNode = audioContext.createGain();
                 gainNode.gain.value = 0.5;
                 gainNode.connect(audioContext.destination);
 
                 let nextNoteTime = audioContext.currentTime;
-                const sequence = [55, 55, 82.41, 73.42, 55, 55, 82.41, 110]; // A1, A1, E2, D2...
+                const bassSeq = [55, 55, 55, 55, 65.41, 65.41, 73.42, 82.41];
+                const leadSeq = [220, 220, 246.94, 261.63, 329.63, 329.63, 293.66, 261.63];
                 let index = 0;
 
                 const scheduler = () => {
+                    const intensity = Math.min(speed / CONFIG.maxSpeed, 1.0);
+                    const filterCutoff = 400 + (intensity * 2000);
+                    const resonance = 1 + (intensity * 10);
+                    const tempo = 0.18 - (intensity * 0.04);
+
                     while (nextNoteTime < audioContext.currentTime + 0.1) {
-                        playNote(sequence[index % sequence.length], nextNoteTime, 0.25);
-                        nextNoteTime += 0.25;
+                        // Driving Bass
+                        playNote(bassSeq[index % bassSeq.length], nextNoteTime, tempo, 'sawtooth', 0.12, filterCutoff, resonance);
+
+                        // Melodic Lead
+                        if (index % 2 === 0) {
+                            playNote(leadSeq[index % leadSeq.length], nextNoteTime, tempo * 2, 'square', 0.04, filterCutoff + 500, resonance);
+                            playNote(leadSeq[index % leadSeq.length] * 1.005, nextNoteTime, tempo * 2, 'sawtooth', 0.03, filterCutoff + 300, resonance);
+                        }
+
+                        // Percussive Noise on every 4th beat
+                        if (index % 4 === 0) {
+                            playNoise(nextNoteTime, 0.1, 0.05 + (intensity * 0.05));
+                        }
+
+                        nextNoteTime += tempo;
                         index++;
                     }
                     setTimeout(scheduler, 50);
@@ -479,8 +520,8 @@
         const enemyWheelMat = new THREE.MeshBasicMaterial({ color: 0x111111 });
 
         function createObstacle() {
-            // Difficulty scaling
-            const spawnRate = CONFIG.obstacleSpawnRate + (score / 100000);
+            // Difficulty scaling - capped for playability
+            const spawnRate = Math.min(CONFIG.obstacleSpawnRate + (score / 200000), 0.1);
             if (Math.random() > spawnRate) return;
 
             const size = 1 + Math.random() * 2;
@@ -503,8 +544,8 @@
         }
 
         function createEnemyCar() {
-            // Difficulty scaling
-            const spawnRate = CONFIG.enemySpawnRate + (score / 200000);
+            // Difficulty scaling - capped for playability
+            const spawnRate = Math.min(CONFIG.enemySpawnRate + (score / 400000), 0.05);
             if (Math.random() > spawnRate) return;
 
             const enemyGroup = new THREE.Group();
@@ -571,7 +612,8 @@
                 // Remove off-screen obstacles
                 if (obstacle.position.z > 15) {
                     scene.remove(obstacle);
-                    // Geometries and materials are shared/reused to prevent memory leaks
+                    // Geometries and materials are shared/reused to prevent memory leaks.
+                    // If they were unique, we would call .dispose() here.
                     obstacles.splice(i, 1);
                     continue;
                 }
@@ -751,8 +793,8 @@
             updateInvincibility(deltaTime);
             createObstacle();
             createEnemyCar();
-            updateObstacles();
             updateGame();
+            updateObstacles();
             updateParticles();
 
             composer.render();
