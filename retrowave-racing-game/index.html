@@ -31,6 +31,13 @@
             color: #ff00ff;
         }
 
+        #mute-toggle {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            z-index: 100;
+        }
+
         #game-over {
             position: absolute;
             top: 50%;
@@ -50,6 +57,25 @@
             color: #00ffff;
             text-transform: uppercase;
             letter-spacing: 5px;
+        }
+
+        #high-scores {
+            margin: 20px 0;
+            text-align: left;
+            display: inline-block;
+        }
+
+        #high-scores h2 {
+            font-size: 20px;
+            color: #ff00ff;
+            text-align: center;
+            margin-bottom: 10px;
+        }
+
+        .score-entry {
+            font-size: 18px;
+            margin: 5px 0;
+            color: #00ffff;
         }
 
         button {
@@ -81,9 +107,16 @@
         <div id="lives">Lives: 3</div>
     </div>
 
+    <button id="mute-toggle" onclick="toggleMusic()">Music: ON</button>
+
     <div id="game-over">
         <h1>Game Over</h1>
         <p id="final-score">Final Score: 0</p>
+        <div id="high-scores">
+            <h2>Top 3 Scores</h2>
+            <div id="scores-list"></div>
+        </div>
+        <br>
         <button onclick="restartGame()">Restart</button>
     </div>
 
@@ -109,7 +142,9 @@
             initialSpeed: 0.5,
             speedIncrement: 0.0001,
             maxSpeed: 2.0,
-            obstacleSpawnRate: 0.02
+            obstacleSpawnRate: 0.02,
+            enemySpawnRate: 0.01,
+            movingObstacleChance: 0.3
         };
 
         let scene, camera, renderer, composer;
@@ -123,8 +158,73 @@
         let lastTime = performance.now();
         let speed = CONFIG.initialSpeed;
         let isGameOver = false;
+        let audioContext, mainOscillator, filter, gainNode;
+        let isMuted = false;
 
         const keys = { ArrowLeft: false, ArrowRight: false, KeyA: false, KeyD: false };
+
+        function initAudio() {
+            try {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+
+                // Simple synthwave-ish bassline loop
+                const playNote = (freq, time, duration) => {
+                    const osc = audioContext.createOscillator();
+                    const g = audioContext.createGain();
+                    osc.type = 'sawtooth';
+                    osc.frequency.setValueAtTime(freq, time);
+
+                    g.gain.setValueAtTime(0.1, time);
+                    g.gain.exponentialRampToValueAtTime(0.0001, time + duration);
+
+                    const f = audioContext.createBiquadFilter();
+                    f.type = 'lowpass';
+                    f.frequency.setValueAtTime(400, time);
+
+                    osc.connect(f);
+                    f.connect(g);
+                    g.connect(gainNode);
+
+                    osc.start(time);
+                    osc.stop(time + duration);
+                };
+
+                gainNode = audioContext.createGain();
+                gainNode.gain.value = 0.5;
+                gainNode.connect(audioContext.destination);
+
+                let nextNoteTime = audioContext.currentTime;
+                const sequence = [55, 55, 82.41, 73.42, 55, 55, 82.41, 110]; // A1, A1, E2, D2...
+                let index = 0;
+
+                const scheduler = () => {
+                    while (nextNoteTime < audioContext.currentTime + 0.1) {
+                        playNote(sequence[index % sequence.length], nextNoteTime, 0.25);
+                        nextNoteTime += 0.25;
+                        index++;
+                    }
+                    setTimeout(scheduler, 50);
+                };
+
+                scheduler();
+            } catch (e) {
+                console.error('AudioContext not supported');
+            }
+        }
+
+        function toggleMusic() {
+            isMuted = !isMuted;
+            const btn = document.getElementById('mute-toggle');
+            btn.innerText = isMuted ? 'Music: OFF' : 'Music: ON';
+            if (gainNode) {
+                gainNode.gain.value = isMuted ? 0 : 0.5;
+            }
+            if (!isMuted && audioContext && audioContext.state === 'suspended') {
+                audioContext.resume();
+            }
+        }
+
+        window.toggleMusic = toggleMusic;
 
         function init() {
             scene = new THREE.Scene();
@@ -161,7 +261,11 @@
             createPlayer();
             
             window.addEventListener('resize', onWindowResize, false);
-            window.addEventListener('keydown', (e) => keys[e.code] = true);
+            window.addEventListener('keydown', (e) => {
+                keys[e.code] = true;
+                if (!audioContext) initAudio();
+                if (audioContext && audioContext.state === 'suspended') audioContext.resume();
+            });
             window.addEventListener('keyup', (e) => keys[e.code] = false);
             
             animate();
@@ -366,8 +470,18 @@
             emissiveIntensity: 0.5
         });
 
+        // Enemy Car Assets
+        const enemyBodyGeom = new THREE.BoxGeometry(1.2, 0.5, 2);
+        const enemyRoofGeom = new THREE.BoxGeometry(1, 0.4, 1);
+        const enemyWheelGeom = new THREE.CylinderGeometry(0.2, 0.2, 0.2, 16);
+        const enemyMatRed = new THREE.MeshPhongMaterial({ color: 0xff3300, emissive: 0xff0000, emissiveIntensity: 0.5 });
+        const enemyMatYellow = new THREE.MeshPhongMaterial({ color: 0xffff00, emissive: 0xffaa00, emissiveIntensity: 0.5 });
+        const enemyWheelMat = new THREE.MeshBasicMaterial({ color: 0x111111 });
+
         function createObstacle() {
-            if (Math.random() > CONFIG.obstacleSpawnRate) return;
+            // Difficulty scaling
+            const spawnRate = CONFIG.obstacleSpawnRate + (score / 100000);
+            if (Math.random() > spawnRate) return;
 
             const size = 1 + Math.random() * 2;
             const mat = Math.random() > 0.5 ? obstacleMatCyan : obstacleMatPink;
@@ -377,9 +491,58 @@
             obstacle.position.x = (Math.random() - 0.5) * CONFIG.roadWidth;
             obstacle.position.y = size / 2;
             obstacle.position.z = -200;
+
+            obstacle.userData = {
+                type: 'obstacle',
+                isMoving: Math.random() < CONFIG.movingObstacleChance,
+                vx: (Math.random() - 0.5) * 0.2
+            };
             
             scene.add(obstacle);
             obstacles.push(obstacle);
+        }
+
+        function createEnemyCar() {
+            // Difficulty scaling
+            const spawnRate = CONFIG.enemySpawnRate + (score / 200000);
+            if (Math.random() > spawnRate) return;
+
+            const enemyGroup = new THREE.Group();
+            const colorMat = Math.random() > 0.5 ? enemyMatRed : enemyMatYellow;
+
+            const body = new THREE.Mesh(enemyBodyGeom, colorMat);
+            body.position.y = 0.4;
+            enemyGroup.add(body);
+
+            const roof = new THREE.Mesh(enemyRoofGeom, obstacleMatCyan);
+            roof.position.y = 0.8;
+            roof.position.z = 0.2;
+            enemyGroup.add(roof);
+
+            const wheelPositions = [
+                [-0.6, 0.2, 0.7], [0.6, 0.2, 0.7],
+                [-0.6, 0.2, -0.7], [0.6, 0.2, -0.7]
+            ];
+            wheelPositions.forEach(pos => {
+                const wheel = new THREE.Mesh(enemyWheelGeom, enemyWheelMat);
+                wheel.rotation.z = Math.PI / 2;
+                wheel.position.set(...pos);
+                enemyGroup.add(wheel);
+            });
+
+            // Random lane
+            const lanes = [-6, 0, 6];
+            enemyGroup.position.x = lanes[Math.floor(Math.random() * lanes.length)];
+            enemyGroup.position.y = 0;
+            enemyGroup.position.z = -250;
+
+            enemyGroup.userData = {
+                type: 'enemy',
+                speed: 0.3 + (score / 50000) // Moves toward player
+            };
+
+            scene.add(enemyGroup);
+            obstacles.push(enemyGroup);
         }
 
         const playerBox = new THREE.Box3();
@@ -390,12 +553,25 @@
 
             for (let i = obstacles.length - 1; i >= 0; i--) {
                 const obstacle = obstacles[i];
+
+                // Base movement (relative to road)
                 obstacle.position.z += speed;
 
+                // Extra movement for specific hazards
+                if (obstacle.userData.type === 'enemy') {
+                    obstacle.position.z += obstacle.userData.speed;
+                }
+                if (obstacle.userData.isMoving) {
+                    obstacle.position.x += obstacle.userData.vx;
+                    if (Math.abs(obstacle.position.x) > CONFIG.roadWidth / 2 - 1) {
+                        obstacle.userData.vx *= -1;
+                    }
+                }
+
                 // Remove off-screen obstacles
-                if (obstacle.position.z > 10) {
+                if (obstacle.position.z > 15) {
                     scene.remove(obstacle);
-                    // Don't dispose shared geometry/material
+                    // Geometries and materials are shared/reused to prevent memory leaks
                     obstacles.splice(i, 1);
                     continue;
                 }
@@ -417,13 +593,12 @@
 
                         // Remove the obstacle that was hit
                         scene.remove(obstacle);
-                        // Don't dispose shared geometry/material
                         obstacles.splice(i, 1);
 
                         if (lives <= 0) {
                             gameOver();
                         } else {
-                            invincibilityTime = 10; // 10 seconds
+                            invincibilityTime = 3; // Reduced to 3 seconds for better gameplay feel
                         }
                     }
                 }
@@ -477,16 +652,39 @@
             }
         }
 
+        function saveHighScore(newScore) {
+            let highScores = JSON.parse(localStorage.getItem('retrowave_high_scores') || '[]');
+            highScores.push(newScore);
+            highScores.sort((a, b) => b - a);
+            highScores = highScores.slice(0, 3);
+            localStorage.setItem('retrowave_high_scores', JSON.stringify(highScores));
+            return highScores;
+        }
+
+        function displayHighScores(scores) {
+            const list = document.getElementById('scores-list');
+            list.innerHTML = '';
+            scores.forEach((s, i) => {
+                const entry = document.createElement('div');
+                entry.className = 'score-entry';
+                entry.innerText = `${i + 1}. ${s}`;
+                list.appendChild(entry);
+            });
+        }
+
         function gameOver() {
             isGameOver = true;
             createExplosion(player.position.x, player.position.y, player.position.z);
             
+            const topScores = saveHighScore(score);
+
             // Allow some time for the explosion to show before stopping
             let frames = 0;
             const endAnimate = () => {
                 if (frames > 100) {
                     document.getElementById('game-over').style.display = 'block';
                     document.getElementById('final-score').innerText = `Final Score: ${score}`;
+                    displayHighScores(topScores);
                     return;
                 }
                 frames++;
@@ -552,6 +750,7 @@
             updatePlayer();
             updateInvincibility(deltaTime);
             createObstacle();
+            createEnemyCar();
             updateObstacles();
             updateGame();
             updateParticles();
