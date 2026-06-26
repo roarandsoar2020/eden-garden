@@ -23,6 +23,12 @@
 
         #score {
             font-size: 24px;
+            margin-bottom: 10px;
+        }
+
+        #lives {
+            font-size: 24px;
+            color: #ff00ff;
         }
 
         #game-over {
@@ -72,6 +78,7 @@
 <body>
     <div id="ui">
         <div id="score">Score: 0</div>
+        <div id="lives">Lives: 3</div>
     </div>
 
     <div id="game-over">
@@ -111,6 +118,8 @@
         let scenery = [];
         let particles = [];
         let score = 0;
+        let lives = 3;
+        let isInvincible = false;
         let speed = CONFIG.initialSpeed;
         let isGameOver = false;
 
@@ -369,17 +378,25 @@
                 const obstacle = obstacles[i];
                 obstacle.position.z += speed;
 
-                // Collision detection
-                const dx = player.position.x - obstacle.position.x;
-                const dz = player.position.z - obstacle.position.z;
-                const distance = Math.sqrt(dx * dx + dz * dz);
-                
                 // Simple box-based collision
                 const playerBox = new THREE.Box3().setFromObject(player);
                 const obstacleBox = new THREE.Box3().setFromObject(obstacle);
 
-                if (playerBox.intersectsBox(obstacleBox)) {
-                    gameOver();
+                if (!isInvincible && playerBox.intersectsBox(obstacleBox)) {
+                    lives--;
+                    document.getElementById('lives').innerText = `Lives: ${lives}`;
+                    createExplosion(obstacle.position.x, obstacle.position.y, obstacle.position.z);
+
+                    // Remove the obstacle that was hit
+                    scene.remove(obstacle);
+                    obstacles.splice(i, 1);
+
+                    if (lives <= 0) {
+                        gameOver();
+                    } else {
+                        triggerInvincibility();
+                    }
+                    continue;
                 }
 
                 // Remove off-screen obstacles
@@ -388,6 +405,21 @@
                     obstacles.splice(i, 1);
                 }
             }
+        }
+
+        function triggerInvincibility() {
+            isInvincible = true;
+            let flickerCount = 0;
+            const maxFlicker = 10;
+            const interval = setInterval(() => {
+                player.visible = !player.visible;
+                flickerCount++;
+                if (flickerCount >= maxFlicker) {
+                    clearInterval(interval);
+                    player.visible = true;
+                    isInvincible = false;
+                }
+            }, 150);
         }
 
         function updateGame() {
