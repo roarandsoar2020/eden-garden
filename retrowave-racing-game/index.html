@@ -120,6 +120,7 @@
         let score = 0;
         let lives = 3;
         let invincibilityTime = 0;
+        let lastTime = performance.now();
         let speed = CONFIG.initialSpeed;
         let isGameOver = false;
 
@@ -524,9 +525,9 @@
             composer.setSize(window.innerWidth, window.innerHeight);
         }
 
-        function updateInvincibility() {
+        function updateInvincibility(deltaTime) {
             if (invincibilityTime > 0) {
-                invincibilityTime -= 1/60; // Approximate 60fps decrement
+                invincibilityTime -= deltaTime;
 
                 // Flickering effect
                 player.visible = Math.floor(performance.now() / 150) % 2 === 0;
@@ -542,10 +543,14 @@
             if (isGameOver) return;
             requestAnimationFrame(animate);
 
+            const currentTime = performance.now();
+            const deltaTime = (currentTime - lastTime) / 1000;
+            lastTime = currentTime;
+
             updateRoad();
             updateScenery();
             updatePlayer();
-            updateInvincibility();
+            updateInvincibility(deltaTime);
             createObstacle();
             updateObstacles();
             updateGame();
