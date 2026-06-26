@@ -1,2 +1,2 @@
 # eden-garden
-Garden where future grows
+Garden where future is shaped
