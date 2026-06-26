@@ -119,7 +119,7 @@
         let particles = [];
         let score = 0;
         let lives = 3;
-        let isInvincible = false;
+        let invincibilityTime = 0;
         let speed = CONFIG.initialSpeed;
         let isGameOver = false;
 
@@ -353,18 +353,26 @@
             scene.add(directionalLight);
         }
 
+        const obstacleGeom = new THREE.BoxGeometry(1, 1, 1);
+        const obstacleMatCyan = new THREE.MeshPhongMaterial({
+            color: 0x00ffff,
+            emissive: 0x00ffff,
+            emissiveIntensity: 0.5
+        });
+        const obstacleMatPink = new THREE.MeshPhongMaterial({
+            color: 0xff00ff,
+            emissive: 0xff00ff,
+            emissiveIntensity: 0.5
+        });
+
         function createObstacle() {
             if (Math.random() > CONFIG.obstacleSpawnRate) return;
 
             const size = 1 + Math.random() * 2;
-            const geom = new THREE.BoxGeometry(size, size, size);
-            const mat = new THREE.MeshPhongMaterial({
-                color: Math.random() > 0.5 ? 0x00ffff : 0xff00ff,
-                emissive: Math.random() > 0.5 ? 0x00ffff : 0xff00ff,
-                emissiveIntensity: 0.5
-            });
-            const obstacle = new THREE.Mesh(geom, mat);
+            const mat = Math.random() > 0.5 ? obstacleMatCyan : obstacleMatPink;
+            const obstacle = new THREE.Mesh(obstacleGeom, mat);
             
+            obstacle.scale.set(size, size, size);
             obstacle.position.x = (Math.random() - 0.5) * CONFIG.roadWidth;
             obstacle.position.y = size / 2;
             obstacle.position.z = -200;
@@ -373,53 +381,52 @@
             obstacles.push(obstacle);
         }
 
+        const playerBox = new THREE.Box3();
+        const obstacleBox = new THREE.Box3();
+
         function updateObstacles() {
+            playerBox.setFromObject(player);
+
             for (let i = obstacles.length - 1; i >= 0; i--) {
                 const obstacle = obstacles[i];
                 obstacle.position.z += speed;
 
-                // Simple box-based collision
-                const playerBox = new THREE.Box3().setFromObject(player);
-                const obstacleBox = new THREE.Box3().setFromObject(obstacle);
-
-                if (!isInvincible && playerBox.intersectsBox(obstacleBox)) {
-                    lives--;
-                    document.getElementById('lives').innerText = `Lives: ${lives}`;
-                    createExplosion(obstacle.position.x, obstacle.position.y, obstacle.position.z);
-
-                    // Remove the obstacle that was hit
-                    scene.remove(obstacle);
-                    obstacles.splice(i, 1);
-
-                    if (lives <= 0) {
-                        gameOver();
-                    } else {
-                        triggerInvincibility();
-                    }
-                    continue;
-                }
-
                 // Remove off-screen obstacles
                 if (obstacle.position.z > 10) {
                     scene.remove(obstacle);
+                    // Don't dispose shared geometry/material
                     obstacles.splice(i, 1);
+                    continue;
+                }
+
+                // Simple distance check before expensive box collision
+                const distZ = Math.abs(player.position.z - obstacle.position.z);
+                if (distZ > 5) continue;
+
+                const distX = Math.abs(player.position.x - obstacle.position.x);
+                if (distX > 5) continue;
+
+                if (invincibilityTime <= 0) {
+                    obstacleBox.setFromObject(obstacle);
+
+                    if (playerBox.intersectsBox(obstacleBox)) {
+                        lives--;
+                        document.getElementById('lives').innerText = `Lives: ${lives}`;
+                        createExplosion(obstacle.position.x, obstacle.position.y, obstacle.position.z);
+
+                        // Remove the obstacle that was hit
+                        scene.remove(obstacle);
+                        // Don't dispose shared geometry/material
+                        obstacles.splice(i, 1);
+
+                        if (lives <= 0) {
+                            gameOver();
+                        } else {
+                            invincibilityTime = 10; // 10 seconds
+                        }
+                    }
                 }
             }
-        }
-
-        function triggerInvincibility() {
-            isInvincible = true;
-            let flickerCount = 0;
-            const maxFlicker = 10;
-            const interval = setInterval(() => {
-                player.visible = !player.visible;
-                flickerCount++;
-                if (flickerCount >= maxFlicker) {
-                    clearInterval(interval);
-                    player.visible = true;
-                    isInvincible = false;
-                }
-            }, 150);
         }
 
         function updateGame() {
@@ -431,15 +438,16 @@
             }
         }
 
+        const particleGeom = new THREE.SphereGeometry(0.1, 8, 8);
+        const particleMatCyan = new THREE.MeshBasicMaterial({ color: 0x00ffff });
+        const particleMatPink = new THREE.MeshBasicMaterial({ color: 0xff00ff });
+
         function createExplosion(x, y, z) {
-            const particleCount = 50;
-            const geom = new THREE.SphereGeometry(0.1, 8, 8);
+            const particleCount = 25; // Reduced count for performance
             
             for (let i = 0; i < particleCount; i++) {
-                const mat = new THREE.MeshBasicMaterial({
-                    color: Math.random() > 0.5 ? 0x00ffff : 0xff00ff
-                });
-                const particle = new THREE.Mesh(geom, mat);
+                const mat = Math.random() > 0.5 ? particleMatCyan : particleMatPink;
+                const particle = new THREE.Mesh(particleGeom, mat);
                 particle.position.set(x, y, z);
                 
                 const velocity = new THREE.Vector3(
@@ -462,6 +470,7 @@
                 
                 if (p.life <= 0) {
                     scene.remove(p.mesh);
+                    // Don't dispose shared materials/geometries
                     particles.splice(i, 1);
                 }
             }
@@ -515,6 +524,20 @@
             composer.setSize(window.innerWidth, window.innerHeight);
         }
 
+        function updateInvincibility() {
+            if (invincibilityTime > 0) {
+                invincibilityTime -= 1/60; // Approximate 60fps decrement
+
+                // Flickering effect
+                player.visible = Math.floor(performance.now() / 150) % 2 === 0;
+
+                if (invincibilityTime <= 0) {
+                    player.visible = true;
+                    invincibilityTime = 0;
+                }
+            }
+        }
+
         function animate() {
             if (isGameOver) return;
             requestAnimationFrame(animate);
@@ -522,6 +545,7 @@
             updateRoad();
             updateScenery();
             updatePlayer();
+            updateInvincibility();
             createObstacle();
             updateObstacles();
             updateGame();
